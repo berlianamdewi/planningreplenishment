@@ -78,9 +78,11 @@ settings = Settings(p1_below=p1, p2_below=p2, wms_priority={1: w1, 2: w2, 3: w3}
 st.subheader("1. Upload data")
 c1, c2 = st.columns(2)
 with c1:
-    f_bin = st.file_uploader("Assign Locations", type=["xlsx"], key="bin")
+    f_bin = st.file_uploader("Active BIN (Excel): Owner, Item, Location Type, Location, "
+                             "Maximum Capacity(Master Unit), Available Quantity", type=["xlsx"], key="bin")
 with c2:
-    f_res = st.file_uploader("Inventory Balances", type=["xlsx"], key="res")
+    f_res = st.file_uploader("Reserve / Inventory (Excel): Item, Lot, Location, LPN, Available, Status",
+                             type=["xlsx"], key="res")
 f_tpl = st.file_uploader("Template WMS (opsional, jika kosong dipakai template bawaan)", type=["xlsx"], key="tpl")
 
 bins = res = None
@@ -126,12 +128,16 @@ if result is not None:
     with tab1:
         st.dataframe(result.tasks, use_container_width=True)
     with tab2:
-        if len(result.tasks) and (result.tasks["USERKEYOVERRIDE"] != "").any():
-            per_user = (result.tasks.assign(QTY=pd.to_numeric(result.tasks["QTY"]))
-                        .groupby("USERKEYOVERRIDE")
+        d = result.task_detail
+        if len(d) and (d["USERKEYOVERRIDE"] != "").any():
+            d = d.assign(QTY=pd.to_numeric(d["QTY"]))
+            per_user = (d.groupby("USERKEYOVERRIDE")
                         .agg(Jumlah_Task=("SKU", "size"), Total_Qty=("QTY", "sum"), Jumlah_SKU=("SKU", "nunique"))
                         .reset_index())
-            st.dataframe(per_user, use_container_width=True)
+            per_prio = d.pivot_table(index="USERKEYOVERRIDE", columns="Prioritas", values="SKU",
+                                     aggfunc="size", fill_value=0).reset_index()
+            st.caption("Satu SKU dikerjakan satu orang. Jumlah task dibagi seimbang per orang dan per prioritas.")
+            st.dataframe(per_user.merge(per_prio, on="USERKEYOVERRIDE"), use_container_width=True)
         else:
             st.info("USERKEYOVERRIDE tidak diisi.")
     with tab3:
