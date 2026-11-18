@@ -1,5 +1,6 @@
 """Automated WMS Replenishment Generator (Streamlit)."""
 import os
+import re
 
 import pandas as pd
 import streamlit as st
@@ -62,25 +63,32 @@ with st.sidebar:
         help="Task dibagi rata ke semua user di daftar ini. Ganti dengan User Key asli di Infor. "
              "Kosongkan jika tidak mau mengisi USERKEYOVERRIDE.")
 
-    st.caption("Lokasi yang tidak boleh jadi sumber Reserve")
-    excl_txt = st.text_area("Lokasi dikecualikan, satu per baris", "RCVD", height=80,
-                            help="Contoh RCVD: barang belum di-putaway, jadi tidak dipakai untuk task. "
-                                 "Dicocokkan persis dengan kolom Location.")
+    with st.expander("Lanjutan: format lokasi Reserve"):
+        res_pattern = st.text_input(
+            "Pola lokasi (regex)", Settings().reserve_pattern,
+            help="Hanya lokasi yang cocok dengan pola ini yang boleh jadi sumber Reserve. Bawaan: "
+                 "DMC + 2 huruf (AA-ZZ) + angka 01-99 + angka 01-99, contoh DMC.AA.02.01.")
 
 users = list(dict.fromkeys(u.strip() for u in users_txt.splitlines() if u.strip()))
 st.sidebar.write(f"Task dibagi ke **{len(users)} orang**" if users else "USERKEYOVERRIDE dikosongkan")
 
-excl_locs = [x.strip() for x in excl_txt.splitlines() if x.strip()]
+try:
+    re.compile(res_pattern)
+except re.error as e:
+    st.sidebar.error(f"Pola lokasi tidak valid: {e}")
+    st.stop()
 settings = Settings(p1_below=p1, p2_below=p2, wms_priority={1: w1, 2: w2, 3: w3}, users=users,
-                    exclude_locations=excl_locs)
+                    reserve_pattern=res_pattern)
 
 # ---------------- Upload ----------------
 st.subheader("1. Upload data")
 c1, c2 = st.columns(2)
 with c1:
-    f_bin = st.file_uploader("Assign Locations", type=["xlsx"], key="bin")
+    f_bin = st.file_uploader("Active BIN (Excel): Owner, Item, Location Type, Location, "
+                             "Maximum Capacity(Master Unit), Available Quantity", type=["xlsx"], key="bin")
 with c2:
-    f_res = st.file_uploader("Inventory Balances", type=["xlsx"], key="res")
+    f_res = st.file_uploader("Reserve / Inventory (Excel): Item, Lot, Location, LPN, Available, Status",
+                             type=["xlsx"], key="res")
 f_tpl = st.file_uploader("Template WMS (opsional, jika kosong dipakai template bawaan)", type=["xlsx"], key="tpl")
 
 bins = res = None
@@ -100,8 +108,9 @@ if bins is not None or res is not None:
             st.dataframe(bins.head(100), use_container_width=True)
     with t2:
         if res is not None:
+            rx = re.compile(res_pattern)
             ok = ((res["status"] == "OK") & (res["lpn"] != "") & (res["available"] > 0)
-                  & ~res["location"].str.upper().isin({x.upper() for x in excl_locs}))
+                  & res["location"].str.upper().map(lambda v: bool(rx.fullmatch(v))))
             st.write(f"{len(res):,} baris, {res['item'].nunique():,} SKU. Bisa dipakai sebagai sumber "
                      f"(OK, ber-LPN, Available>0): {int(ok.sum()):,}")
             st.dataframe(res.head(100), use_container_width=True)
