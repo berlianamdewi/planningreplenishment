@@ -78,11 +78,9 @@ settings = Settings(p1_below=p1, p2_below=p2, wms_priority={1: w1, 2: w2, 3: w3}
 st.subheader("1. Upload data")
 c1, c2 = st.columns(2)
 with c1:
-    f_bin = st.file_uploader("Active BIN (Excel): Owner, Item, Location Type, Location, "
-                             "Maximum Capacity(Master Unit), Available Quantity", type=["xlsx"], key="bin")
+    f_bin = st.file_uploader("Assign Locations", type=["xlsx"], key="bin")
 with c2:
-    f_res = st.file_uploader("Reserve / Inventory (Excel): Item, Lot, Location, LPN, Available, Status",
-                             type=["xlsx"], key="res")
+    f_res = st.file_uploader("Inventory Balances", type=["xlsx"], key="res")
 f_tpl = st.file_uploader("Template WMS (opsional, jika kosong dipakai template bawaan)", type=["xlsx"], key="tpl")
 
 bins = res = None
