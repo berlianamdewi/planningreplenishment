@@ -4,8 +4,9 @@ Active BIN : rasio = Available Quantity / Maximum Capacity
 Prioritas  : < 50% -> 1, < 80% -> 2, selain itu 3  (kode WMS 1 / 5 / 9)
 Kebutuhan  : Max - Available (tidak pernah melebihi Max)
 Reserve    : LPN tidak kosong, Status OK, Available > 0, lokasi bukan RCVD (dll.); FIFO = Lot terkecil dulu; boleh ambil sebagian
-Operator   : task dibagi rata ke beberapa user (kolom USERKEYOVERRIDE)
+Operator   : SKU dibagi ke beberapa user (kolom USERKEYOVERRIDE): 1 SKU = 1 orang, beban seimbang per prioritas
 """
+from collections import Counter
 from dataclasses import dataclass, field
 
 import pandas as pd
@@ -51,6 +52,27 @@ def prioritas(ratio: float, s: Settings) -> int:
     if ratio < s.p2_below:
         return 2
     return 3
+
+
+def bagi_user(td: pd.DataFrame, users: list) -> pd.Series:
+    """Tentukan operator tiap task. Satu SKU selalu ke satu orang.
+
+    Beban = jumlah task. Prioritas 1 dibagi dulu, lalu 2, lalu 3. Di tiap prioritas, SKU dengan task
+    terbanyak dibagi lebih dulu ke orang yang bebannya paling sedikit di prioritas itu (seri: total beban
+    paling sedikit). Hasilnya tiap orang kebagian porsi sama di tiap prioritas dan di total.
+    """
+    sku = td.groupby("SKU").agg(prio=("_prio", "first"), n=("SKU", "size"), qty=("QTY", "sum")).reset_index()
+    total = {u: 0 for u in users}
+    per = {u: Counter() for u in users}
+    owner = {}
+    for p in sorted(sku["prio"].unique()):
+        grp = sku[sku["prio"] == p].sort_values(["n", "qty", "SKU"], ascending=[False, False, True])
+        for r in grp.itertuples(index=False):
+            u = min(users, key=lambda x: (per[x][p], total[x], users.index(x)))
+            owner[r.SKU] = u
+            per[u][p] += r.n
+            total[u] += r.n
+    return td["SKU"].map(owner)
 
 
 def run_replenishment(bins: pd.DataFrame, res: pd.DataFrame, s: Settings = None) -> Result:
@@ -146,8 +168,7 @@ def run_replenishment(bins: pd.DataFrame, res: pd.DataFrame, s: Settings = None)
     if len(td):
         td = td.sort_values(["_prio", "SKU", "_lot", "FROMLOC"], na_position="last").reset_index(drop=True)
         users = [u for u in s.users if u]
-        # round-robin: task ke-1 user 1, ke-2 user 2, ... lalu ulang. Tiap prioritas ikut terbagi rata.
-        td["USERKEYOVERRIDE"] = [users[i % len(users)] for i in range(len(td))] if users else ""
+        td["USERKEYOVERRIDE"] = bagi_user(td, users) if users else ""
 
         wms = pd.DataFrame({c: "" for c in WMS_COLUMNS}, index=td.index)
         for c in ["STORERKEY", "SKU", "FROMLOC", "LOT", "FROMID", "TOLOC", "QTY", "USERKEYOVERRIDE"]:
