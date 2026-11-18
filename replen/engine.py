@@ -3,7 +3,7 @@
 Active BIN : rasio = Available Quantity / Maximum Capacity
 Prioritas  : < 50% -> 1, < 80% -> 2, selain itu 3  (kode WMS 1 / 5 / 9)
 Kebutuhan  : Max - Available (tidak pernah melebihi Max)
-Reserve    : LPN tidak kosong, Status OK, Available > 0; FIFO = Lot terkecil dulu; boleh ambil sebagian
+Reserve    : LPN tidak kosong, Status OK, Available > 0, lokasi bukan RCVD (dll.); FIFO = Lot terkecil dulu; boleh ambil sebagian
 Operator   : task dibagi rata ke beberapa user (kolom USERKEYOVERRIDE)
 """
 from dataclasses import dataclass, field
@@ -26,6 +26,7 @@ class Settings:
     task_status: str = "OK"
     ok_status: str = "OK"
     users: list = field(default_factory=list)   # daftar User Key; kosong = USERKEYOVERRIDE dikosongkan
+    exclude_locations: list = field(default_factory=lambda: ["RCVD"])  # lokasi yang bukan Reserve (belum putaway)
 
 
 @dataclass
@@ -66,12 +67,16 @@ def run_replenishment(bins: pd.DataFrame, res: pd.DataFrame, s: Settings = None)
     # ---------- Sumber Reserve: LPN tidak kosong, Status OK, Available > 0 ----------
     is_ok = res["status"].eq(s.ok_status.upper())
     has_lpn = res["lpn"] != ""
-    usable = res[is_ok & has_lpn & (res["available"] > 0)]
+    excl = {x.strip().upper() for x in s.exclude_locations if x.strip()}
+    in_excl = res["location"].str.upper().isin(excl)      # cocok persis, mis. RCVD
+    usable = res[is_ok & has_lpn & ~in_excl & (res["available"] > 0)]
     usable = usable.sort_values(["item", "lot_num", "lot", "location", "lpn"], na_position="last")  # FIFO
     res_by = {k: g for k, g in usable.groupby("item", sort=False)}
 
     dup_items = set(bins.loc[bins["item"].duplicated(keep=False), "item"])
     add_val("Baris Reserve berstatus bukan OK (HOLD dll.)", int((~is_ok).sum()), "Info", "Tidak dipakai sebagai sumber.")
+    add_val("Baris Reserve di lokasi yang dikecualikan (mis. RCVD, belum putaway)", int((is_ok & has_lpn & in_excl).sum()),
+            "Info", "Tidak dipakai sebagai sumber.")
     add_val("Baris Reserve status OK tapi LPN kosong", int((is_ok & ~has_lpn).sum()), "Info", "Tidak dipakai sebagai sumber.")
     add_val("SKU muncul lebih dari sekali di data Active BIN", len(dup_items), "Error",
             "Task tidak dibuat; lokasi tidak dipilih sembarangan.")
