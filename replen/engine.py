@@ -3,9 +3,10 @@
 Active BIN : rasio = Available Quantity / Maximum Capacity
 Prioritas  : < 50% -> 1, < 80% -> 2, selain itu 3  (kode WMS 1 / 5 / 9)
 Kebutuhan  : Max - Available (tidak pernah melebihi Max)
-Reserve    : LPN tidak kosong, Status OK, Available > 0, lokasi bukan RCVD (dll.); FIFO = Lot terkecil dulu; boleh ambil sebagian
+Reserve    : LPN tidak kosong, Status OK, Available > 0, lokasi berformat DMC.AA.01.01; FIFO = Lot terkecil dulu; boleh ambil sebagian
 Operator   : SKU dibagi ke beberapa user (kolom USERKEYOVERRIDE): 1 SKU = 1 orang, beban seimbang per prioritas
 """
+import re
 from collections import Counter
 from dataclasses import dataclass, field
 
@@ -27,7 +28,8 @@ class Settings:
     task_status: str = "OK"
     ok_status: str = "OK"
     users: list = field(default_factory=list)   # daftar User Key; kosong = USERKEYOVERRIDE dikosongkan
-    exclude_locations: list = field(default_factory=lambda: ["RCVD"])  # lokasi yang bukan Reserve (belum putaway)
+    # Hanya lokasi berformat DMC.<2 huruf AA-ZZ>.<01-99>.<01-99> (mis. DMC.AA.02.01) yang boleh jadi sumber Reserve
+    reserve_pattern: str = r"^DMC\.[A-Z]{2}\.(0[1-9]|[1-9]\d)\.(0[1-9]|[1-9]\d)$"
 
 
 @dataclass
@@ -89,16 +91,17 @@ def run_replenishment(bins: pd.DataFrame, res: pd.DataFrame, s: Settings = None)
     # ---------- Sumber Reserve: LPN tidak kosong, Status OK, Available > 0 ----------
     is_ok = res["status"].eq(s.ok_status.upper())
     has_lpn = res["lpn"] != ""
-    excl = {x.strip().upper() for x in s.exclude_locations if x.strip()}
-    in_excl = res["location"].str.upper().isin(excl)      # cocok persis, mis. RCVD
-    usable = res[is_ok & has_lpn & ~in_excl & (res["available"] > 0)]
+    rx = re.compile(s.reserve_pattern)
+    loc_ok = res["location"].str.upper().map(lambda v: bool(rx.fullmatch(v)))   # lokasi boleh jadi Reserve
+    usable = res[is_ok & has_lpn & loc_ok & (res["available"] > 0)]
     usable = usable.sort_values(["item", "lot_num", "lot", "location", "lpn"], na_position="last")  # FIFO
     res_by = {k: g for k, g in usable.groupby("item", sort=False)}
 
     dup_items = set(bins.loc[bins["item"].duplicated(keep=False), "item"])
     add_val("Baris Reserve berstatus bukan OK (HOLD dll.)", int((~is_ok).sum()), "Info", "Tidak dipakai sebagai sumber.")
-    add_val("Baris Reserve di lokasi yang dikecualikan (mis. RCVD, belum putaway)", int((is_ok & has_lpn & in_excl).sum()),
-            "Info", "Tidak dipakai sebagai sumber.")
+    bad_loc = res.loc[is_ok & has_lpn & ~loc_ok, "location"]
+    add_val("Baris Reserve di lokasi yang bukan format Reserve (RCVD, PICKTO, INTRANSIT, dll.)", int(len(bad_loc)), "Info",
+            "Tidak dipakai sebagai sumber. Contoh lokasi: " + ", ".join(sorted(bad_loc.unique())[:10]))
     add_val("Baris Reserve status OK tapi LPN kosong", int((is_ok & ~has_lpn).sum()), "Info", "Tidak dipakai sebagai sumber.")
     add_val("SKU muncul lebih dari sekali di data Active BIN", len(dup_items), "Error",
             "Task tidak dibuat; lokasi tidak dipilih sembarangan.")
@@ -134,6 +137,9 @@ def run_replenishment(bins: pd.DataFrame, res: pd.DataFrame, s: Settings = None)
         n_need += 1
 
         grp = res_by.get(r.item)
+        if grp is not None:
+            grp = grp[grp["location"] != r.location]          # tidak memindah ke lokasi yang sama
+            grp = grp if len(grp) else None
         if grp is None:
             rows.append({**base, "Status": "Gagal: tidak ada stok Reserve", "Qty Task": 0, "Jumlah Task": 0,
                          "Kekurangan": _q(need)})
