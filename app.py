@@ -164,3 +164,10 @@ if result is not None:
                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
     d3.download_button("Laporan exception & validasi", exception_book(result), "Laporan_Exception.xlsx",
                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+st.divider()
+st.markdown(
+    "<div style='text-align:center; color:gray; font-size:0.85rem;'>"
+    "Made with ❤️ by mieayamlovers</div>",
+    unsafe_allow_html=True,
+)
